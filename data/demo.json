@@ -1,0 +1,257 @@
+[
+  {
+    "code": "TSK1624401",
+    "name": "Rekayasa Perangkat Lunak",
+    "credits": 2,
+    "classes": [
+      {
+        "label": "A",
+        "meetings": [
+          {
+            "day": "Senin",
+            "start": "13:00",
+            "end": "14:40",
+            "room": "A.202 · G. Lab. T. Kom"
+          }
+        ]
+      },
+      {
+        "label": "B",
+        "meetings": [
+          {
+            "day": "Selasa",
+            "start": "13:00",
+            "end": "14:40",
+            "room": "A.202 · G. Lab. T. Kom"
+          }
+        ]
+      },
+      {
+        "label": "C",
+        "meetings": [
+          {
+            "day": "Selasa",
+            "start": "14:50",
+            "end": "16:30",
+            "room": "A.202 · G. Lab. T. Kom"
+          }
+        ]
+      },
+      {
+        "label": "D",
+        "meetings": [
+          {
+            "day": "Rabu",
+            "start": "13:00",
+            "end": "14:40",
+            "room": "A.202 · G. Lab. T. Kom"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "TSK1624403",
+    "name": "Organisasi dan Arsitektur Komputer",
+    "credits": 3,
+    "classes": [
+      {
+        "label": "A",
+        "meetings": [
+          {
+            "day": "Rabu",
+            "start": "14:50",
+            "end": "17:20",
+            "room": "B. 101 · T. KOM"
+          }
+        ]
+      },
+      {
+        "label": "B",
+        "meetings": [
+          {
+            "day": "Rabu",
+            "start": "09:20",
+            "end": "11:50",
+            "room": "A.202 · G. Lab. T. Kom"
+          }
+        ]
+      },
+      {
+        "label": "C",
+        "meetings": [
+          {
+            "day": "Senin",
+            "start": "11:00",
+            "end": "13:30",
+            "room": "R. Dexlite 401"
+          }
+        ]
+      },
+      {
+        "label": "D",
+        "meetings": [
+          {
+            "day": "Kamis",
+            "start": "07:00",
+            "end": "09:30",
+            "room": "A.202 · G. Lab. T. Kom"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "TSK1624404",
+    "name": "Sistem Basis Data",
+    "credits": 2,
+    "classes": [
+      {
+        "label": "A",
+        "meetings": [
+          {
+            "day": "Selasa",
+            "start": "09:40",
+            "end": "11:20",
+            "room": "B. 101 · T. KOM"
+          }
+        ]
+      },
+      {
+        "label": "B",
+        "meetings": [
+          {
+            "day": "Selasa",
+            "start": "07:30",
+            "end": "09:10",
+            "room": "R. Dexlite Plus B"
+          }
+        ]
+      },
+      {
+        "label": "C",
+        "meetings": [
+          {
+            "day": "Kamis",
+            "start": "07:30",
+            "end": "09:10",
+            "room": "B. 101 · T. KOM"
+          }
+        ]
+      },
+      {
+        "label": "D",
+        "meetings": [
+          {
+            "day": "Kamis",
+            "start": "09:20",
+            "end": "11:00",
+            "room": "B. 101 · T. KOM"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "TSK1624406",
+    "name": "Sistem Operasi",
+    "credits": 2,
+    "classes": [
+      {
+        "label": "A",
+        "meetings": [
+          {
+            "day": "Selasa",
+            "start": "14:50",
+            "end": "16:30",
+            "room": "R. Dexlite Plus B"
+          }
+        ]
+      },
+      {
+        "label": "B",
+        "meetings": [
+          {
+            "day": "Kamis",
+            "start": "13:00",
+            "end": "14:40",
+            "room": "A.202 · G. Lab. T. Kom"
+          }
+        ]
+      },
+      {
+        "label": "C",
+        "meetings": [
+          {
+            "day": "Kamis",
+            "start": "09:40",
+            "end": "11:20",
+            "room": "A.202 · G. Lab. T. Kom"
+          }
+        ]
+      },
+      {
+        "label": "D",
+        "meetings": [
+          {
+            "day": "Selasa",
+            "start": "13:00",
+            "end": "14:40",
+            "room": "R. Dexlite Plus B"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "TSK1624409",
+    "name": "Matematika Teknik",
+    "credits": 3,
+    "classes": [
+      {
+        "label": "A",
+        "meetings": [
+          {
+            "day": "Senin",
+            "start": "09:40",
+            "end": "12:10",
+            "room": "B.201 · T. KOM"
+          }
+        ]
+      },
+      {
+        "label": "B",
+        "meetings": [
+          {
+            "day": "Rabu",
+            "start": "07:00",
+            "end": "09:30",
+            "room": "R. Dexlite Plus B"
+          }
+        ]
+      },
+      {
+        "label": "C",
+        "meetings": [
+          {
+            "day": "Jumat",
+            "start": "07:30",
+            "end": "10:00",
+            "room": "A.201 · G. Lab. T. Kom"
+          }
+        ]
+      },
+      {
+        "label": "D",
+        "meetings": [
+          {
+            "day": "Kamis",
+            "start": "11:10",
+            "end": "13:40",
+            "room": "B.102 · T.Kom"
+          }
+        ]
+      }
+    ]
+  }
+]
