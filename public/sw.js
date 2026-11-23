@@ -1,4 +1,4 @@
-const cacheName = 'sekelas-v2';
+const cacheName = 'sekelas-v13';
 const shell = ['/', '/app.js', '/style.css', '/manifest.webmanifest',
   '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable.png', '/fonts/Inter.woff2'];
 

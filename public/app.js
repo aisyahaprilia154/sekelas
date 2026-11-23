@@ -2,20 +2,24 @@ const view = document.querySelector('#view');
 const nav = document.querySelector('#navigation');
 const days = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 const demoSource = 'Simulasi S1 Teknik Komputer';
+const profileKey = 'sekelas-profile';
+let toastTimer;
 const tabs = [
   ['mata-kuliah', 'Mata Kuliah', 'book'], ['susun', 'Susun', 'sliders'],
-  ['hasil', 'Hasil', 'calendar'], ['tentang', 'Tentang', 'info']
+  ['hasil', 'Hasil', 'calendar'], ['tentang', 'Tentang', 'info'], ['profil', 'Profil', 'user']
 ];
 const paths = {
   book: '<path d="M4 19V5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0 0 4h14M8 8h8m-8 4h6"/>',
   sliders: '<path d="M4 7h16M4 17h16"/><circle cx="8" cy="7" r="2" fill="currentColor"/><circle cx="16" cy="17" r="2" fill="currentColor"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18m-13 5h2m4 0h2"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v2"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   right: '<path d="m9 6 6 6-6 6"/>',
   back: '<path d="M19 12H5m6-6-6 6 6 6"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
   tick: '<path d="m5 12 4 4L19 6"/>',
+  print: '<path d="M6 8V3h12v5M6 17H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v7H6zM17 11h2"/>',
   upload: '<path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4"/>',
   edit: '<path d="m14 5 5 5M4 20l4-1 12-12-3-3L5 16l-1 4Z"/>'
 };
@@ -35,13 +39,26 @@ function store(key, value, storage = 'localStorage') {
   catch { notify('Penyimpanan browser tidak tersedia. Perubahan berlaku selama halaman terbuka.'); }
 }
 const saved = read('sekelas-active', null);
+const workspace = read('sekelas-workspace', null) ?? crypto.randomUUID();
+store('sekelas-workspace', workspace);
 const session = read('sekelas-search', {}, 'sessionStorage');
+const noPreferences = { freeDay: '', dayTimes: {} };
+const storedPreferences = session.preferences ?? { freeDay: session.freeDay ?? '' };
+const storedDayTimes = storedPreferences.dayTimes ?? (
+  storedPreferences.earliestStart || storedPreferences.latestEnd
+    ? Object.fromEntries(days.map(day => [day, {
+      earliestStart: storedPreferences.earliestStart ?? '', latestEnd: storedPreferences.latestEnd ?? ''
+    }])) : {}
+);
+const resultBatchSize = 4;
 const state = {
+  profile: read(profileKey, null),
   catalog: saved?.catalog ?? [], source: saved?.source ?? '',
   selected: new Set(session.selected ?? []), result: session.result ?? null,
-  freeDay: session.freeDay ?? '', loading: !saved, loadError: '', catalogFilter: '', buildFilter: ''
+  preferences: { freeDay: storedPreferences.freeDay ?? '', dayTimes: storedDayTimes },
+  revision: saved?.revision ?? 0, synced: false,
+  visibleResults: resultBatchSize, loading: true, loadError: '', catalogFilter: '', buildFilter: ''
 };
-let toastTimer;
 let routeVersion = 0;
 let catalogVersion = 0;
 function notify(message) {
@@ -57,7 +74,12 @@ function errorAt(element, message) {
 }
 async function api(path, options) {
   let response;
-  try { response = await fetch('/api' + path, options); }
+  try {
+    response = await fetch('/api' + path, {
+      ...options,
+      headers: { 'X-Sekelas-Workspace': workspace, ...options?.headers }
+    });
+  }
   catch { throw new Error('API tidak terhubung. Cek koneksi lalu coba lagi.'); }
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload === null) throw new Error(payload?.message ?? 'API gagal memproses permintaan.');
@@ -90,20 +112,57 @@ function hasSchedule(course) {
   return course.classes.some(item => item.meetings.length);
 }
 function saveSearch() {
-  store('sekelas-search', { selected: [...state.selected], freeDay: state.freeDay, result: state.result }, 'sessionStorage');
+  store('sekelas-search', { selected: [...state.selected], preferences: state.preferences, result: state.result }, 'sessionStorage');
 }
-function setCatalog(catalog, source, reset = false) {
+function setCatalog(catalog, source, reset = false, revision = state.revision) {
   catalogVersion++;
   state.catalog = catalog;
   state.source = source;
   state.loadError = '';
   state.loading = false;
+  state.revision = revision;
+  state.synced = true;
   state.result = null;
   state.selected = reset ? new Set() : new Set([...state.selected].filter(
     code => catalog.some(course => course.code === code && hasSchedule(course))));
-  if (reset) state.catalogFilter = state.buildFilter = state.freeDay = '';
-  store('sekelas-active', { catalog, source });
+  if (reset) {
+    state.catalogFilter = state.buildFilter = '';
+    state.preferences = noPreferences;
+  }
+  store('sekelas-active', { catalog, source, revision });
   saveSearch();
+}
+function acceptCatalog(payload, reset = false) {
+  setCatalog(payload.catalog, payload.source, reset, payload.revision);
+}
+async function saveCatalog(catalog, source) {
+  if (!state.synced) throw new Error('Tunggu jadwal selesai dimuat. Jika luring, sambungkan kembali lalu muat ulang.');
+  return api('/katalog', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ catalog, source, revision: state.revision })
+  });
+}
+async function loadCatalog({ focus = false } = {}) {
+  state.loading = true;
+  state.loadError = '';
+  const version = catalogVersion;
+  render({ focus });
+  try {
+    let payload = await api('/katalog');
+    if (version !== catalogVersion) return;
+    if (payload.revision === 0 && saved) {
+      payload = await api('/katalog', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ catalog: saved.catalog, source: saved.source, revision: 0 })
+      });
+    }
+    acceptCatalog(payload);
+  } catch (error) {
+    state.loadError = error.message;
+    state.loading = false;
+    state.synced = false;
+  }
+  render();
 }
 async function loadDemo() {
   const version = catalogVersion;
@@ -111,9 +170,9 @@ async function loadDemo() {
   state.loadError = '';
   render();
   try {
-    const catalog = await api('/mata-kuliah');
+    const catalog = await api('/contoh');
     if (version !== catalogVersion) return;
-    setCatalog(catalog, demoSource, true);
+    acceptCatalog(await saveCatalog(catalog, demoSource), true);
   } catch (error) {
     if (version !== catalogVersion) return;
     state.loadError = error.message;
@@ -133,7 +192,7 @@ function courseRows(filter) {
   const courses = state.catalog.filter(course => matches(course, filter));
   if (!courses.length) {
     if (state.loading) return empty('Memuat jadwal contoh…');
-    if (state.loadError) return empty(escape(state.loadError), '<button class="button secondary compact" data-demo>Coba lagi</button>');
+    if (state.loadError) return empty(escape(state.loadError), '<button class="button secondary compact" data-reload>Coba lagi</button>');
     return empty(filter ? 'Tidak ada mata kuliah yang cocok.' : 'Tambahkan jadwal untuk mulai menyusun KRS.');
   }
   return `<ul class="list">${courses.map(course => `<li><a class="course-row" href="${href('detail-mk', course.code)}">
@@ -207,6 +266,60 @@ function dayOptions(selected, withAny = false) {
   return (withAny ? '<option value="">Tanpa preferensi</option>' : '') + days.map(day =>
     `<option ${selected === day ? 'selected' : ''}>${day}</option>`).join('');
 }
+function dayTimeRow(day, limits = {}) {
+  return `<div class="day-time-row">
+    <label class="field">Hari<select data-day-time="day" aria-label="Hari batas jam">${dayOptions(day)}</select></label>
+    <label class="field">Mulai paling awal<input type="time" data-day-time="start" value="${escape(limits.earliestStart)}"></label>
+    <label class="field">Selesai paling akhir<input type="time" data-day-time="end" value="${escape(limits.latestEnd)}"></label>
+    <button class="button secondary compact" type="button" data-remove-day aria-label="Hapus batas jam ${day}">Hapus</button>
+  </div>`;
+}
+function preferenceFields({ freeDay, dayTimes }) {
+  return `<fieldset class="preference-fields" aria-label="Hari dan jam kuliah">
+    <label class="field">Hari yang ingin dikosongkan<select name="freeDay">${dayOptions(freeDay, true)}</select></label>
+    <div class="day-times">${Object.entries(dayTimes).map(([day, limits]) => dayTimeRow(day, limits)).join('')}</div>
+    <button class="button secondary compact" type="button" data-add-day>Tambah batas jam per hari</button>
+  </fieldset>`;
+}
+function setupPreferenceFields(form) {
+  const rows = form.querySelector('.day-times');
+  const add = form.querySelector('[data-add-day]');
+  function updateOptions() {
+    const selected = [...rows.querySelectorAll('select')].map(select => select.value);
+    for (const row of rows.children) {
+      const select = row.querySelector('select');
+      for (const option of select.options) option.disabled = option.value !== select.value && selected.includes(option.value);
+      row.querySelector('[data-remove-day]').setAttribute('aria-label', 'Hapus batas jam ' + select.value);
+    }
+    add.disabled = selected.length === days.length;
+  }
+  add.addEventListener('click', () => {
+    const selected = [...rows.querySelectorAll('select')].map(select => select.value);
+    const day = days.find(day => !selected.includes(day));
+    if (!day) return;
+    rows.insertAdjacentHTML('beforeend', dayTimeRow(day));
+    updateOptions();
+    rows.lastElementChild.querySelector('select').focus();
+  });
+  rows.addEventListener('click', event => {
+    const button = event.target.closest('[data-remove-day]');
+    if (!button) return;
+    button.closest('.day-time-row').remove();
+    updateOptions();
+    add.focus();
+  });
+  rows.addEventListener('change', updateOptions);
+  updateOptions();
+}
+function readPreferences(form) {
+  const dayTimes = Object.fromEntries([...form.querySelectorAll('.day-time-row')].map(row => [
+    row.querySelector('select').value, {
+      earliestStart: row.querySelector('[data-day-time="start"]').value,
+      latestEnd: row.querySelector('[data-day-time="end"]').value
+    }
+  ]).filter(([, limits]) => limits.earliestStart || limits.latestEnd));
+  return { freeDay: form.elements.freeDay.value, dayTimes };
+}
 function selectionList() {
   const courses = state.catalog.filter(course => matches(course, state.buildFilter));
   if (!courses.length) return empty(state.buildFilter ? 'Tidak ada mata kuliah yang cocok.' : 'Daftar mata kuliah masih kosong.', state.catalog.length ? '' : link('tambah', 'Tambah jadwal'));
@@ -223,7 +336,7 @@ function buildPage() {
       </section>
       <form class="panel side-panel" id="search-form">
         <h2>Preferensi jadwal</h2><p class="muted" id="selection-count"></p>
-        <label class="field spaced">Hari yang ingin dikosongkan<select name="freeDay">${dayOptions(state.freeDay, true)}</select></label>
+        ${preferenceFields(state.preferences)}
         <p class="notice error" role="alert" hidden></p>
         <button class="button" type="submit">${icon('search', 18)} Cari jadwal</button>
         ${state.source === demoSource ? '<button type="button" class="button secondary" id="select-demo">Pilih semua contoh</button>' : ''}
@@ -231,7 +344,8 @@ function buildPage() {
     </div>`;
   const list = view.querySelector('#selection-list');
   const form = view.querySelector('#search-form');
-  const select = form.elements.freeDay;
+  setupPreferenceFields(form);
+  const preferences = form.querySelector('fieldset');
   const submit = form.querySelector('[type="submit"]');
   const demo = form.querySelector('#select-demo');
   const count = view.querySelector('#selection-count');
@@ -267,31 +381,34 @@ function buildPage() {
   });
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    const courses = state.catalog.filter(course => state.selected.has(course.code));
+    const courses = selectedCourses();
     const error = form.querySelector('[role="alert"]');
-    submit.disabled = select.disabled = filter.disabled = list.inert = true;
+    const criteria = readPreferences(form);
+    submit.disabled = preferences.disabled = filter.disabled = list.inert = true;
     if (demo) demo.disabled = true;
     submit.textContent = 'Mencari…';
     errorAt(error, '');
-    try { await runSearch(courses, select.value); }
+    try { await runSearch(courses, criteria); }
     catch (failure) { errorAt(error, failure.message); }
     finally {
-      select.disabled = filter.disabled = list.inert = false;
+      preferences.disabled = filter.disabled = list.inert = false;
       if (demo) demo.disabled = false;
       submit.innerHTML = icon('search', 18) + ' Cari jadwal';
       refresh();
     }
   });
 }
-async function runSearch(courses, freeDay) {
+async function runSearch(courses, preferences) {
+  if (!state.synced) throw new Error('Hubungkan ke API dan muat ulang jadwal sebelum mencari.');
   const version = routeVersion;
   const result = await api('/jadwal/cari', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ courses, freeDay })
+    body: JSON.stringify({ codes: courses.map(course => course.code), ...preferences })
   });
   if (version !== routeVersion) return;
-  state.freeDay = freeDay;
+  state.preferences = preferences;
+  state.visibleResults = resultBatchSize;
   state.result = { ...result, codes: courses.map(course => course.code) };
   saveSearch();
   go('hasil');
@@ -299,55 +416,214 @@ async function runSearch(courses, freeDay) {
 function freeBadges(daysOff) {
   return daysOff.map(day => `<span class="badge green">${day} kosong</span>`).join('');
 }
+function selectedCourses() {
+  return state.catalog.filter(course => state.selected.has(course.code));
+}
+function currentResult() {
+  const result = state.result;
+  return result?.codes?.length === state.selected.size &&
+    result.codes.every(code => state.selected.has(code)) ? result : null;
+}
+function resultCards(schedules, start, end) {
+  const first = new Map(schedules[0].classes.map(course => [course.code, course.label]));
+  return schedules.slice(start, end).map((item, offset) => {
+    const index = start + offset + 1;
+    const freeDays = item.freeDays.filter(day => day !== 'Minggu' || state.preferences.freeDay === 'Minggu');
+    const previewRows = item.classes.map(course => {
+      const changed = first.get(course.code) !== course.label;
+      const meetings = [...course.meetings].sort((a, b) =>
+        days.indexOf(a.day) - days.indexOf(b.day) || a.start.localeCompare(b.start));
+      return `<li>
+        <div class="result-course-heading">
+          <strong>${escape(course.name)}</strong>
+          <span class="badge ${changed ? 'changed-class' : 'class-label'}">Kelas ${escape(course.label)}${changed
+            ? '<span class="sr-only">, berbeda dari pilihan pertama</span>' : ''}</span>
+        </div>
+        ${meetings.map(meeting => `<small>${escape(meeting.day)} ${escape(meeting.start)}–${escape(meeting.end)}</small>`).join('')}
+      </li>`;
+    }).join('');
+    return `<article class="panel result-card">
+      <a class="result-card-link" href="${href('detail-jadwal', index)}" aria-labelledby="choice-${index}">
+        <h3 id="choice-${index}">Jadwal ${index}</h3>
+        <div class="stats">${stat(item.gap + ' menit', 'total jeda')}${stat(item.dayCount, 'hari kuliah')}</div>
+        ${freeDays.length ? `<div class="button-row result-days">${freeBadges(freeDays)}</div>` : ''}
+      </a>
+      <button class="preview-toggle" type="button" popovertarget="preview-${index}" aria-controls="preview-${index}" aria-expanded="false"
+        aria-label="Pratinjau jadwal ${index}">Pratinjau</button>
+      <section id="preview-${index}" class="result-preview panel" popover aria-label="Pratinjau jadwal ${index}">
+        <h3>Pratinjau jadwal ${index}</h3>
+        <ul class="list result-courses">${previewRows}</ul>
+        <a class="result-detail-link" href="${href('detail-jadwal', index)}">Lihat jadwal lengkap ${icon('right', 14)}</a>
+      </section>
+    </article>`;
+  }).join('');
+}
+function positionPreview(preview) {
+  const card = preview.parentElement.getBoundingClientRect();
+  const availableBelow = nav.getBoundingClientRect().top - card.bottom;
+  const availableAbove = card.top - 8;
+  preview.style.width = card.width + 'px';
+  preview.style.left = card.left + 'px';
+  preview.style.maxHeight = '';
+  const above = availableBelow < preview.offsetHeight && availableAbove > availableBelow;
+  preview.style.maxHeight = `min(22rem, ${Math.max(100, above ? availableAbove : availableBelow)}px)`;
+  preview.style.top = Math.max(8, above ? card.top - preview.offsetHeight + 1 : card.bottom - 1) + 'px';
+}
+function enablePreviews(list) {
+  list.addEventListener('pointerover', event => {
+    const card = event.target.closest('.result-card');
+    if (event.pointerType !== 'mouse' || !card || card.contains(event.relatedTarget)) return;
+    const preview = card.querySelector('.result-preview');
+    if (!preview.matches(':popover-open')) {
+      preview.dataset.pinned = 'false';
+      preview.showPopover();
+      positionPreview(preview);
+    }
+  });
+  list.addEventListener('pointerout', event => {
+    const card = event.target.closest('.result-card');
+    if (event.pointerType !== 'mouse' || !card || card.contains(event.relatedTarget)) return;
+    const preview = card.querySelector('.result-preview:popover-open');
+    if (preview?.dataset.pinned === 'false' && !preview.contains(document.activeElement)) preview.hidePopover();
+  });
+  list.addEventListener('click', event => {
+    const button = event.target.closest('.preview-toggle');
+    if (!button) return;
+    const preview = document.getElementById(button.getAttribute('aria-controls'));
+    preview.dataset.pinned = 'true';
+  });
+  list.addEventListener('toggle', event => {
+    const preview = event.target;
+    if (!preview.classList.contains('result-preview')) return;
+    if (event.newState === 'open') positionPreview(preview);
+    preview.parentElement.querySelector('.preview-toggle')
+      .setAttribute('aria-expanded', String(event.newState === 'open'));
+  }, true);
+}
+function refreshResults() {
+  view.innerHTML = `${heading('Hasil jadwal')}<p class="panel" role="status">Memperbarui hasil sesuai mata kuliah terpilih…</p>`;
+  const version = routeVersion;
+  runSearch(selectedCourses(), state.preferences).catch(error => {
+    if (version !== routeVersion) return;
+    view.innerHTML = `${heading('Hasil jadwal')}<section class="notice error" role="alert">
+      <p>${escape(error.message)}</p>
+      <div class="actions"><button class="button secondary" type="button" id="retry-results">Coba lagi</button>
+        ${link('susun', 'Ubah mata kuliah', { type: 'secondary' })}</div>
+    </section>`;
+    view.querySelector('#retry-results').addEventListener('click', refreshResults);
+  });
+}
 function resultsPage() {
-  if (!state.result) {
-    view.innerHTML = `${heading('Hasil jadwal')}${empty('Hasil akan muncul setelah kamu mencari jadwal.', link('susun', 'Susun jadwal'))}`;
+  if (!state.selected.size) {
+    view.innerHTML = `${heading('Hasil jadwal')}${empty('Pilih mata kuliah di tab Susun untuk melihat hasil.', link('susun', 'Susun jadwal'))}`;
     return;
   }
-  const { compatibleCount, total, schedules, codes } = state.result;
-  const description = state.freeDay
-    ? `${total.toLocaleString('id')} dari ${compatibleCount.toLocaleString('id')} jadwal bebas bentrok memiliki ${state.freeDay} kosong.`
-    : `${compatibleCount.toLocaleString('id')} alternatif bebas bentrok, diurutkan berdasarkan jeda terpendek.`;
-  view.innerHTML = `${heading('Hasil jadwal', description)}
-    <form class="panel form-grid" id="filter-form">
-      <label class="field">Hari yang ingin dikosongkan<select name="freeDay">${dayOptions(state.freeDay, true)}</select></label>
-      <div class="button-row align-end">${link('susun', 'Ubah pilihan mata kuliah', { type: 'secondary' })}</div>
-      <p class="notice error span" role="alert" hidden></p>
+  const result = currentResult();
+  if (!result) return refreshResults();
+  const { compatibleCount, total, schedules } = result;
+  const { freeDay, dayTimes } = state.preferences;
+  const filters = [
+    freeDay && `${freeDay} kosong`,
+    ...Object.entries(dayTimes).map(([day, limits]) => `${day}` +
+      (limits.earliestStart ? ` mulai paling awal ${limits.earliestStart}` : '') +
+      (limits.latestEnd ? ` selesai paling akhir ${limits.latestEnd}` : ''))
+  ].filter(Boolean);
+  const description = (filters.length
+    ? `${total.toLocaleString('id')} dari ${compatibleCount.toLocaleString('id')} jadwal bebas bentrok memenuhi preferensimu.`
+    : `${compatibleCount.toLocaleString('id')} alternatif bebas bentrok.`) +
+    (total ? ' Diurutkan berdasarkan jeda terpendek.' : '');
+
+  view.innerHTML = `${heading('Hasil jadwal', escape(description))}
+    <form class="panel result-filter" id="filter-form">
+      <h2>Preferensi jadwal</h2>
+      ${preferenceFields(state.preferences)}
+      <div class="button-row">
+        <button class="button" type="submit">Terapkan filter</button>
+        ${filters.length ? '<button class="button secondary" id="reset-preferences" type="button">Hapus filter</button>' : ''}
+        ${link('susun', 'Ubah mata kuliah', { type: 'secondary' })}
+      </div>
+      <p class="notice error" role="alert" hidden></p>
     </form>
-    ${schedules.length ? `<p class="muted spaced">${total > schedules.length ? `Menampilkan ${schedules.length} dari ${total.toLocaleString('id')} hasil.` : 'Buka alternatif untuk melihat kelas dan jamnya.'}</p>
-      <div class="result-list">${schedules.map((item, i) => `<a class="panel result-card" href="${href('detail-jadwal', i + 1)}">
-        <div class="heading-row"><h3>Jadwal ${i + 1}</h3>${icon('right', 17)}</div>
-        <div class="stats">${stat(item.gap + ' menit', 'total jeda')}${stat(item.dayCount, 'hari kuliah')}</div>
-        <div class="button-row">${freeBadges(item.freeDays.filter(day => day !== 'Minggu' || state.freeDay === 'Minggu'))}</div>
-      </a>`).join('')}</div>` : `<div class="spaced">${empty(
-      state.freeDay && compatibleCount ? `Tidak ada jadwal tanpa bentrok dengan ${state.freeDay} kosong. Ubah filter untuk melihat pilihan lain.` :
-        'Semua kombinasi bentrok. Coba ubah pilihan mata kuliah atau tambahkan kelas paralel.')}</div>`}`;
+    ${schedules.length ? `<section class="result-section" aria-labelledby="choices-title">
+      <div class="heading-row result-summary">
+        <div><h2 id="choices-title">Bandingkan pilihan</h2>
+          <p>Arahkan kursor atau pilih Pratinjau untuk melihat kelas dan jam.</p>
+        </div>
+        <p id="results-count" role="status"></p>
+      </div>
+      <div class="result-list">${resultCards(schedules, 0, state.visibleResults)}</div>
+      <div class="actions"><button type="button" class="button secondary" id="more-results"></button></div>
+    </section>` : `<section class="notice warning" role="status">
+      <h2>${compatibleCount ? 'Tidak ada jadwal yang sesuai' : 'Tidak ada kombinasi bebas bentrok'}</h2>
+      <p>${compatibleCount
+        ? `Tidak ada jadwal dengan batas ini: ${escape(filters.join(', '))}. Longgarkan batas jam, ubah hari kosong, atau pilih Hapus filter.`
+        : 'Ubah pilihan mata kuliah atau tambahkan kelas paralel untuk mencari lagi.'}</p>
+    </section>`}`;
+
   const form = view.querySelector('#filter-form');
-  form.elements.freeDay.addEventListener('change', async event => {
-    const select = event.target;
-    select.disabled = true;
+  setupPreferenceFields(form);
+  const submit = form.querySelector('[type="submit"]');
+  const reset = form.querySelector('#reset-preferences');
+  const fields = form.querySelector('fieldset');
+  const error = form.querySelector('[role="alert"]');
+  async function applyFilter(preferences) {
+    const courses = selectedCourses();
+    errorAt(error, '');
+    submit.disabled = fields.disabled = true;
+    if (reset) reset.disabled = true;
     form.setAttribute('aria-busy', 'true');
-    try { await runSearch(state.catalog.filter(course => codes.includes(course.code)), select.value); }
-    catch (error) {
-      errorAt(form.querySelector('[role="alert"]'), error.message);
-      select.value = state.freeDay;
-    } finally {
-      select.disabled = false;
+    try { await runSearch(courses, preferences); }
+    catch (failure) { errorAt(error, failure.message); }
+    finally {
+      submit.disabled = fields.disabled = false;
+      if (reset) reset.disabled = false;
       form.removeAttribute('aria-busy');
     }
+  }
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    applyFilter(readPreferences(form));
+  });
+  reset?.addEventListener('click', () => applyFilter(noPreferences));
+
+  const more = view.querySelector('#more-results');
+  if (!more) return;
+  const count = view.querySelector('#results-count');
+  const list = view.querySelector('.result-list');
+  enablePreviews(list);
+  function updateCount() {
+    const rendered = Math.min(state.visibleResults, schedules.length);
+    const remaining = schedules.length - rendered;
+    count.textContent = `${rendered} dari ${total.toLocaleString('id')} hasil`;
+    if (!remaining && total > rendered) count.textContent += ' · batas tampilan 50';
+    more.hidden = !remaining;
+    more.textContent = `Tampilkan ${Math.min(remaining, resultBatchSize)} berikutnya`;
+  }
+  updateCount();
+  more.addEventListener('click', () => {
+    const previous = state.visibleResults;
+    state.visibleResults += resultBatchSize;
+    list.insertAdjacentHTML('beforeend', resultCards(schedules, previous, state.visibleResults));
+    updateCount();
+    list.children[previous].querySelector('.result-card-link').focus();
   });
 }
 function resultDetail(id) {
-  const result = /^[1-9]\d*$/.test(id) && state.result?.schedules[Number(id) - 1];
+  const result = /^[1-9]\d*$/.test(id) && currentResult()?.schedules[Number(id) - 1];
   if (!result) return missing('Alternatif jadwal tidak tersedia. Lakukan pencarian kembali.', 'hasil');
-  view.innerHTML = `${back('hasil', 'Hasil jadwal')}${heading('Jadwal ' + Number(id))}
-    <div class="split">
+  view.innerHTML = `${back('hasil', 'Hasil jadwal')}
+    <div class="heading-row detail-heading">
+      ${heading('Jadwal ' + Number(id))}
+      <button class="button secondary" type="button" id="print-schedule">${icon('print', 18)} Cetak jadwal</button>
+    </div>
+    <div class="split schedule-detail">
       <section class="stack" aria-label="Jadwal per hari">${days.map(day => {
         const items = result.classes.flatMap(course => course.meetings.filter(meeting => meeting.day === day)
           .map(meeting => ({ course, meeting }))).sort((a, b) => a.meeting.start.localeCompare(b.meeting.start));
-        return `<article class="panel"><h3>${day}</h3>
+        return `<article class="panel ${items.length ? '' : 'day-without-classes'}"><h3>${day}</h3>
           ${items.length ? items.map(({ course, meeting }) => `<div class="session">
-            <strong>${escape(course.name)} <span class="badge">Kelas ${escape(course.label)}</span></strong>${meetingText(meeting)}
+            <strong>${escape(course.name)} <span class="badge">Kelas ${escape(course.label)}</span></strong>
+            ${meetingText(meeting)}
           </div>`).join('') : '<p class="muted">Tidak ada kelas</p>'}
         </article>`;
       }).join('')}</section>
@@ -356,6 +632,7 @@ function resultDetail(id) {
         <div class="actions">${freeBadges(result.freeDays)}</div>
       </aside>
     </div>`;
+  view.querySelector('#print-schedule').addEventListener('click', () => window.print());
 }
 function addPage(mode) {
   const manual = mode === 'manual';
@@ -414,11 +691,16 @@ function renderImport(container) {
         <div class="button-row"><button class="button" id="apply-import" type="button">Gunakan jadwal ini</button></div>
       </article>`;
       preview.hidden = false;
-      preview.querySelector('#apply-import').addEventListener('click', () => {
+      preview.querySelector('#apply-import').addEventListener('click', async event => {
         if (version !== catalogVersion) return errorAt(error, 'Daftar aktif berubah. Buat pratinjau baru.');
-        setCatalog(data.catalog, 'Impor Excel · ' + file.name, true);
-        notify('Jadwal dari Excel sudah aktif.');
-        go('mata-kuliah');
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          acceptCatalog(await saveCatalog(data.catalog, 'Impor Excel · ' + file.name), true);
+          notify('Jadwal dari Excel sudah aktif.');
+          go('mata-kuliah');
+        } catch (failure) { errorAt(error, failure.message); }
+        finally { button.disabled = false; }
       });
     } catch (failure) { errorAt(error, failure.message); }
     finally {
@@ -469,7 +751,7 @@ function renderEditor(container, course) {
   const form = container.querySelector('form');
   const list = form.querySelector('#class-list');
   const error = form.querySelector('[role="alert"]');
-  form.addEventListener('click', event => {
+  form.addEventListener('click', async event => {
     const action = event.target.closest('button')?.dataset.action;
     const item = event.target.closest('.class-fields');
     const meetings = item?.querySelector('.meeting-list');
@@ -492,9 +774,17 @@ function renderEditor(container, course) {
       event.target.closest('.meeting-fields').remove();
     }
     if (action === 'delete-course' && confirm('Hapus ' + course.name + ' dari jadwal aktif?')) {
-      setCatalog(state.catalog.filter(item => item.code !== course.code), 'Jadwal pribadi');
-      notify('Mata kuliah dihapus.');
-      go('mata-kuliah');
+      const button = event.target.closest('button');
+      button.disabled = true;
+      try {
+        if (!state.synced) throw new Error('Muat ulang jadwal sebelum menghapus mata kuliah.');
+        acceptCatalog(await api('/mata-kuliah/' + encodeURIComponent(course.code), {
+          method: 'DELETE', headers: { 'X-Catalog-Revision': String(state.revision) }
+        }));
+        notify('Mata kuliah dihapus.');
+        go('mata-kuliah');
+      } catch (failure) { errorAt(error, failure.message); }
+      finally { button.disabled = false; }
     }
   });
   form.addEventListener('change', event => {
@@ -506,7 +796,7 @@ function renderEditor(container, course) {
     section.hidden = input.checked;
     for (const field of section.querySelectorAll('input, select')) field.disabled = input.checked;
   });
-  form.addEventListener('submit', event => {
+  form.addEventListener('submit', async event => {
     event.preventDefault();
     try {
       const data = new FormData(form);
@@ -535,12 +825,18 @@ function renderEditor(container, course) {
         return { label, meetings };
       });
       const updated = { code, name, credits: Number(data.get('credits')), classes };
-      const catalog = course ? state.catalog.map(item => item.code === course.code ? updated : item) : [...state.catalog, updated];
+      if (!state.synced) throw new Error('Muat ulang jadwal sebelum menyimpan mata kuliah.');
+      form.inert = true;
+      const payload = await api('/mata-kuliah' + (course ? '/' + encodeURIComponent(course.code) : ''), {
+        method: course ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ course: updated, revision: state.revision })
+      });
       if (course && course.code !== code && state.selected.delete(course.code)) state.selected.add(code);
-      setCatalog(catalog, 'Jadwal pribadi');
+      acceptCatalog(payload);
       notify('Mata kuliah disimpan.');
       go('detail-mk', code);
     } catch (failure) { errorAt(error, failure.message); }
+    finally { form.inert = false; }
   });
 }
 function editPage(course) {
@@ -550,6 +846,52 @@ function editPage(course) {
   view.append(section);
   renderEditor(section, course);
 }
+function loginPage() {
+  view.innerHTML = `<div class="identity-page">
+    ${heading('Masuk ke Sekelas', 'Isi nama dan NIM untuk membuat profilmu.')}
+    <form class="panel stack" id="login-form">
+      <label class="field">Nama<input name="name" autocomplete="name" required></label>
+      <label class="field">NIM<input name="nim" required></label>
+      <p class="notice error" role="alert" hidden></p>
+      <button type="submit" class="button">Masuk</button>
+    </form>
+  </div>`;
+  const form = view.querySelector('form');
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    const name = form.elements.namedItem('name');
+    const nim = form.elements.namedItem('nim');
+    const profile = { name: name.value.trim(), nim: nim.value.trim() };
+    if (!profile.name || !profile.nim) {
+      errorAt(form.querySelector('[role="alert"]'), 'Isi Nama dan NIM.');
+      (profile.name ? nim : name).focus();
+      return;
+    }
+    state.profile = profile;
+    store(profileKey, profile);
+    loadCatalog({ focus: true });
+  });
+}
+function profilePage() {
+  view.innerHTML = `<div class="panel profile-card">
+    <header class="profile-header">
+      <span class="profile-icon">${icon('user', 26)}</span>
+      <h1>Profil</h1>
+      <button class="button danger compact" id="logout" type="button">Keluar</button>
+    </header>
+    <dl class="profile-details">
+      <div><dt>Nama</dt><dd>${escape(state.profile.name)}</dd></div>
+      <div><dt>NIM</dt><dd>${escape(state.profile.nim)}</dd></div>
+    </dl>
+  </div>`;
+  view.querySelector('#logout').addEventListener('click', () => {
+    try { window.localStorage.removeItem(profileKey); }
+    catch { notify('Profil tidak dapat dihapus dari penyimpanan browser.'); }
+    state.profile = null;
+    history.replaceState(null, '', href('masuk'));
+    render({ focus: true });
+  });
+}
 function aboutPage() {
   view.innerHTML = `${heading('Tentang Sekelas', 'Aplikasi Pencocokan Jadwal Kelas untuk Penyusunan KRS.')}
     <div class="split">
@@ -557,12 +899,12 @@ function aboutPage() {
         <ul class="about-list">
           <li>Sekelas memilih satu kelas paralel per mata kuliah dan melewati kombinasi yang jamnya bertabrakan.</li>
           <li>Jeda adalah waktu antara akhir satu kelas dan awal kelas berikutnya pada hari yang sama.</li>
-          <li>Hasil diurutkan berdasarkan total jeda, lalu jumlah hari kuliah. Filter hari kosong menyisakan jadwal yang bebas kelas pada hari pilihanmu.</li>
+          <li>Hasil diurutkan berdasarkan total jeda, lalu jumlah hari kuliah. Kamu dapat memilih hari kosong dan mengatur batas jam khusus pada hari tertentu.</li>
         </ul>
         <p class="muted">Data bawaan berisi lima mata kuliah dari simulasi semester genap S1 Teknik Komputer. Gunakan kode kelas dalam hasil sebagai acuan saat mengisi KRS.</p>
       </section>
       <aside class="panel side-panel"><h2>Data dan koneksi</h2>
-        <p class="muted">Jadwal aktif tersimpan di browser perangkatmu. Tampilan, daftar yang sudah dimuat, dan input manual tersedia secara luring setelah kunjungan pertama. Unggah Excel dan pencarian jadwal memakai API.</p>
+        <p class="muted">Jadwal aktif tersimpan melalui layanan aplikasi. Browser menyimpan salinan untuk dibaca saat luring. Perubahan mata kuliah, impor, dan pencarian membutuhkan koneksi.</p>
       </aside>
     </div>`;
 }
@@ -571,6 +913,15 @@ function missing(message, page = 'mata-kuliah') {
 }
 function render({ focus = false } = {}) {
   routeVersion++;
+  nav.hidden = !state.profile;
+  if (!state.profile) {
+    if (!location.hash) history.replaceState(null, '', href('masuk'));
+    view.setAttribute('aria-busy', 'false');
+    if (!view.querySelector('#login-form')) loginPage();
+    if (focus) view.focus();
+    return;
+  }
+  if (location.hash === href('masuk')) history.replaceState(null, '', href('mata-kuliah'));
   const [, page = 'mata-kuliah', encoded = ''] = location.hash.split('/');
   let id;
   try { id = decodeURIComponent(encoded); } catch { id = ''; }
@@ -588,23 +939,37 @@ function render({ focus = false } = {}) {
     case 'tambah': addPage(id); break;
     case 'edit': editPage(course()); break;
     case 'tentang': aboutPage(); break;
+    case 'profil': profilePage(); break;
     default: missing('Periksa alamat halaman dan coba lagi.');
   }
-  view.setAttribute('aria-busy', String(state.loading));
-  const title = view.querySelector('h1')?.textContent;
-  document.title = title && page !== 'mata-kuliah' ? title + ' · Sekelas' : 'Sekelas — Penyusun Jadwal KRS';
+  const usesCatalog = page !== 'profil';
+  view.setAttribute('aria-busy', String(usesCatalog && state.loading));
+  if (usesCatalog && state.loadError && state.catalog.length) {
+    view.insertAdjacentHTML('afterbegin', `<div class="notice warning" role="status">${escape(state.loadError)}
+      Salinan jadwal terakhir ditampilkan. <button type="button" class="button secondary compact" data-reload>Muat ulang</button></div>`);
+  }
   if (focus) {
     view.focus({ preventScroll: true });
     window.scrollTo(0, 0);
   }
 }
 view.addEventListener('click', async event => {
+  if (event.target.closest('[data-reload]')) { await loadCatalog(); return; }
   if (!event.target.closest('[data-demo]') || state.loading) return;
   if (state.catalog.length && !confirm('Ganti jadwal aktif dengan jadwal contoh?')) return;
   await loadDemo();
   if (state.loadError) notify(state.loadError);
 });
 window.addEventListener('hashchange', () => render({ focus: true }));
+function repositionPreview() {
+  const preview = view.querySelector('.result-preview:popover-open');
+  if (!preview) return;
+  const card = preview.parentElement.getBoundingClientRect();
+  if (card.bottom < 0 || card.top >= nav.getBoundingClientRect().top) preview.hidePopover();
+  else positionPreview(preview);
+}
+window.addEventListener('scroll', repositionPreview, { passive: true });
+window.addEventListener('resize', repositionPreview);
 const updateConnection = () => {
   document.querySelector('#connection').textContent = navigator.onLine ? 'Penyusun KRS' : 'Luring';
 };
@@ -631,5 +996,5 @@ window.addEventListener('appinstalled', () => {
   install.hidden = true;
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(console.warn);
-if (saved) render();
-else loadDemo();
+if (state.profile) loadCatalog();
+else render();

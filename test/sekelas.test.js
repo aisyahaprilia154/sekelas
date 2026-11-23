@@ -4,7 +4,10 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import { parseSchedule } from '../lib/import.js';
 import { findSchedules } from '../lib/schedule.js';
-import app from '../server.js';
+import { createApp } from '../src/app.js';
+import { createDatabase } from '../src/config/database.js';
+
+const app = createApp(await createDatabase({ mode: 'local', path: ':memory:' }));
 
 const demo = JSON.parse(readFileSync(new URL('../data/demo.json', import.meta.url), 'utf8'));
 
@@ -32,6 +35,48 @@ test('pencocokan memeriksa semua pertemuan dan menerima kelas yang bersambung', 
   assert.equal(findSchedules([first, next], 'Sabtu').total, 0);
   assert.equal(findSchedules([first, course('C', [meeting('Sabtu', '09:30', '11:30')])]).total, 0);
   assert.throws(() => findSchedules([course('D', [])]), /belum mempunyai kelas/);
+});
+
+test('filter jam memeriksa semua pertemuan dan menerima jam tepat pada batas', () => {
+  const courses = [{
+    code: 'A', name: 'Algoritma', classes: [{
+      label: 'A', meetings: [
+        { day: 'Senin', start: '08:00', end: '10:00' },
+        { day: 'Rabu', start: '10:30', end: '13:00' }
+      ]
+    }]
+  }];
+  assert.equal(findSchedules(courses, 'Jumat', '08:00', '13:00').total, 1);
+  assert.equal(findSchedules(courses, '', '08:01').total, 0);
+  assert.equal(findSchedules(courses, '', '', '12:59').total, 0);
+  assert.equal(findSchedules(courses, 'Rabu', '08:00', '13:00').total, 0);
+  assert.equal(findSchedules(courses, 'Jumat', '08:01', '13:00').compatibleCount, 1);
+  assert.throws(() => findSchedules(courses, '', '25:00'), /format HH:MM/);
+  assert.throws(() => findSchedules(courses, '', '14:00', '13:00'), /harus setelah/);
+});
+
+test('batas jam per hari hanya membatasi hari yang dipilih', () => {
+  const courses = [{
+    code: 'DAY', name: 'Uji hari', credits: 2,
+    classes: [{ label: 'A', meetings: [
+      { day: 'Senin', start: '07:00', end: '17:00' },
+      { day: 'Selasa', start: '06:00', end: '19:00' }
+    ] }]
+  }];
+  const find = (dayTimes) => findSchedules(courses, '', '', '', dayTimes);
+  assert.equal(find({ Senin: { earliestStart: '07:00', latestEnd: '17:00' } }).total, 1);
+  assert.equal(find({ Senin: { earliestStart: '07:01' } }).total, 0);
+  assert.equal(find({ Senin: { latestEnd: '16:59' } }).total, 0);
+  assert.equal(find({
+    Senin: { earliestStart: '07:00', latestEnd: '17:00' },
+    Selasa: { latestEnd: '18:00' }
+  }).total, 0);
+  assert.equal(find({ Rabu: { earliestStart: '08:00' } }).total, 1);
+  assert.equal(find({}).total, 1);
+  assert.throws(() => find({ Senin: { earliestStart: '17:00', latestEnd: '07:00' } }), /selesai Senin/);
+  assert.throws(() => find({ Senin: { earliestStart: '25:00' } }), /format HH:MM/);
+  assert.throws(() => find({ Unknown: {} }), /per hari tidak valid/);
+  assert.throws(() => find([]), /per hari tidak valid/);
 });
 
 test('impor mengelompokkan kelas, mencatat data rusak dan mempertahankan kelas tanpa jam', () => {
@@ -66,9 +111,12 @@ test('web service dan aset PWA dapat dimuat dari origin yang sama', async () => 
     const result = await fetch(base + '/api/jadwal/cari', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ courses, freeDay: 'Jumat' })
+      body: JSON.stringify({ courses, freeDay: 'Jumat', earliestStart: '09:00', latestEnd: '16:30' })
     });
-    assert.equal((await result.json()).total, 325);
+    assert.equal(result.status, 200);
+    const filtered = await result.json();
+    assert.equal(filtered.total, 44);
+    assert.equal(filtered.compatibleCount, 494);
     const invalidFile = await fetch(base + '/api/impor', {
       method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: 'invalid'
     });
