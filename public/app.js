@@ -978,22 +978,36 @@ window.addEventListener('offline', updateConnection);
 updateConnection();
 
 const install = document.querySelector('#install');
+const installHelp = document.querySelector('#install-help');
+const standalone = window.matchMedia('(display-mode: standalone)');
 let installEvent;
+let installed = false;
+function updateInstallButton() {
+  install.hidden = installed || standalone.matches || navigator.standalone === true;
+}
+standalone.addEventListener('change', updateInstallButton);
+updateInstallButton();
 window.addEventListener('beforeinstallprompt', event => {
   event.preventDefault();
   installEvent = event;
-  install.hidden = false;
 });
 install.addEventListener('click', async () => {
-  if (!installEvent) return;
+  if (!installEvent) {
+    installHelp.showModal();
+    return;
+  }
   const prompt = installEvent;
   installEvent = null;
-  install.hidden = true;
-  await prompt.prompt();
+  install.disabled = true;
+  try { await prompt.prompt(); }
+  catch { installHelp.showModal(); }
+  finally { install.disabled = false; }
 });
 window.addEventListener('appinstalled', () => {
   installEvent = null;
-  install.hidden = true;
+  installed = true;
+  installHelp.close();
+  updateInstallButton();
 });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(console.warn);
 if (state.profile) loadCatalog();
