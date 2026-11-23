@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import { parseSchedule } from '../lib/import.js';
 import { findSchedules } from '../lib/schedule.js';
-import { createApp } from '../src/app.js';
+import { createApp } from '../src/createApp.js';
 import { createDatabase } from '../src/config/database.js';
 
 const app = createApp(await createDatabase({ mode: 'local', path: ':memory:' }));

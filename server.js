@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { createDatabase } from './src/config/database.js';
-import { createApp } from './src/app.js';
+import { createApp } from './src/createApp.js';
 
 const database = await createDatabase();
 const app = createApp(database);

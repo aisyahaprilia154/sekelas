@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { InputError } from '../lib/schedule.js';
 import { createCourseModel, HttpError } from './models/courseModel.js';
 import { createApiRoutes } from './routes/apiRoutes.js';
+
 export function createApp(database) {
   const app = express();
   app.disable('x-powered-by');

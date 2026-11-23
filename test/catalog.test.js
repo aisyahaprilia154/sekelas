@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createDatabase } from '../src/config/database.js';
-import { createApp } from '../src/app.js';
+import { createApp } from '../src/createApp.js';
 import { demoCatalog } from '../src/models/courseModel.js';
 
 const newCourse = {
