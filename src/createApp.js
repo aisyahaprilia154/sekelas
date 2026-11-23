@@ -4,8 +4,7 @@ import { InputError } from '../lib/schedule.js';
 import { createCourseModel, HttpError } from './models/courseModel.js';
 import { createApiRoutes } from './routes/apiRoutes.js';
 
-export function createApp(database) {
-  const app = express();
+export function createApp(database, app = express()) {
   app.disable('x-powered-by');
   app.use('/api', (_req, res, next) => {
     res.set('Cache-Control', 'no-store');
